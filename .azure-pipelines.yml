@@ -1,0 +1,63 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+      - feature/*
+
+pool:
+  name: Default
+  demands:
+    - Agent.Name -equals HibaPC-WSL
+
+stages:
+  - stage: CI
+    displayName: "Terraform CI (dev & prod)"
+    jobs:
+      - job: terraform_ci
+        displayName: "fmt, validate, plan"
+        steps:
+          - checkout: self
+
+          - bash: |
+              set -e
+              terraform -version
+              az account show --query name -o tsv
+            displayName: "Vérifier Terraform et la connexion Azure"
+
+          - bash: |
+              set -e
+              terraform fmt -recursive -check
+            displayName: "terraform fmt -check"
+
+          - bash: |
+              set -e
+              terraform init -backend=false -input=false
+              terraform validate
+            displayName: "Initialiser les providers et valider"
+
+          - bash: |
+              set -e
+              mkdir -p "$(Build.ArtifactStagingDirectory)/tfplans"
+              terraform init -input=false
+
+              terraform workspace select dev || terraform workspace new dev
+              terraform plan -input=false -refresh=false -no-color \
+                -var-file=envs/dev.tfvars \
+                -out="$(Build.ArtifactStagingDirectory)/tfplans/tfplan-dev"
+
+              terraform workspace select prod || terraform workspace new prod
+              terraform plan -input=false -refresh=false -no-color \
+                -var-file=envs/prod.tfvars \
+                -out="$(Build.ArtifactStagingDirectory)/tfplans/tfplan-prod"
+            displayName: "terraform plan (dev & prod)"
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publier les plans"
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)/tfplans"
+              ArtifactName: "tfplans"
